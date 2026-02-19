@@ -1,12 +1,20 @@
 {
     "domain": "idotmatrix",
     "name": "iDotMatrix",
+    "bluetooth": [
+        {
+            "local_name": "IDM-*"
+        }
+    ],
     "codeowners": [
         "@joanlopez"
     ],
     "config_flow": true,
     "iot_class": "local_polling",
     "issue_tracker": "https://github.com/joanlopez/ha-idotmatrix/issues",
-    "quality_scale": "bronze",
+    "requirements": [
+        "bleak",
+        "bleak-retry-connector"
+    ],
     "version": "0.1.0"
 }
