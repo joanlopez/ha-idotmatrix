@@ -14,6 +14,7 @@
     "issue_tracker": "https://github.com/joanlopez/ha-idotmatrix/issues",
     "requirements": [
         "bleak",
+        "Pillow",
         "bleak-retry-connector"
     ],
     "version": "0.1.0"
