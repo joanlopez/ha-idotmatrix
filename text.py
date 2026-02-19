@@ -10,9 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import DeviceInfo
 
-
-from .idotmatrix.client import IDotMatrixClient
-from .idotmatrix.screensize import ScreenSize
+from .hub import IDotMatrixHub
 
 from .const import (
     DOMAIN,
@@ -28,9 +26,11 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the iDotMatrix text."""
-    address: str = entry.data[CONF_MAC]
+    hub: IDotMatrixHub = hass.data[DOMAIN][entry.entry_id]
     name: str = entry.title or DEFAULT_DEVICE_NAME
-    async_add_entities([IDotMatrixText(hass, entry, name=name, address=address)])
+    address: str = entry.data[CONF_MAC]
+    _LOGGER.debug("Setting up text entity for %s (%s)", name, address)
+    async_add_entities([IDotMatrixText(hub, name=name, address=address)])
 
 
 class IDotMatrixText(TextEntity):
@@ -38,13 +38,12 @@ class IDotMatrixText(TextEntity):
 
     _attr_has_entity_name = True
     _attr_name = "Text"
-    _attr_native_min_value = 0
-    _attr_native_max_value = 255  # Keep small to start (BLE packet limits vary)
+    _attr_native_min = 0
+    _attr_native_max = 255  # Keep small to start (BLE packet limits vary)
     _attr_icon = "mdi:dot-matrix"
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, name: str, address: str) -> None:
-        self.hass = hass
-        self.entry = entry
+    def __init__(self, hub: IDotMatrixHub, name: str, address: str) -> None:
+        self._hub = hub
         self.name = name
         self.address = address
 
@@ -70,20 +69,10 @@ class IDotMatrixText(TextEntity):
         self._attr_native_value = value
         self.async_write_ha_state()
 
-        client = IDotMatrixClient(
-            screen_size=ScreenSize.SIZE_64x64,
-            mac_address=self.address,
-        )
-
         try:
-            await client.connect()
-            await client.text.show_text(text=value)
+            await self._hub.async_send_text(value)
+            _LOGGER.debug("Text updated on %s", self.address)
         except TimeoutError:
             _LOGGER.error("Timeout connecting/writing to %s", self.address)
         except Exception:
             _LOGGER.exception("Failed to write text to %s", self.address)
-        finally:
-            try:
-                await client.disconnect()
-            except Exception:
-                _LOGGER.debug("Disconnect failed", exc_info=True)

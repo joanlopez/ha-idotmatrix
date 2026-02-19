@@ -36,5 +36,10 @@ class IDotMatrixClient:
         """
         Connect to the IDotMatrix device.
         """
-        
         await self._connection_manager.connect_by_address(self.mac_address)
+
+    async def disconnect(self):
+        """
+        Disconnect from the IDotMatrix device.
+        """
+        await self._connection_manager.disconnect()

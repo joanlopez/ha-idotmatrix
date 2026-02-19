@@ -61,7 +61,7 @@ class ConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="bluetooth_confirm",
-            description_placeholders={"name": self.discovery_info.name},
+            description_placeholders={"name": self.discovery_info.name or self.discovery_info.address},
         )
 
     async def async_step_user(
@@ -81,7 +81,7 @@ class ConfigFlow(ConfigFlow, domain=DOMAIN):
                     title=user_input.get(CONF_NAME, DEFAULT_DEVICE_NAME),
                     data={CONF_MAC: address, CONF_NAME: user_input.get(CONF_NAME, DEFAULT_DEVICE_NAME)},
                 )
-            except Exception as e:
+            except Exception:
                 _LOGGER.exception("Unexpected exception in config flow")
                 errors["base"] = "unknown"
 
