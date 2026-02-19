@@ -1,0 +1,12 @@
+{
+    "domain": "idotmatrix",
+    "name": "iDotMatrix",
+    "codeowners": [
+        "@joanlopez"
+    ],
+    "config_flow": true,
+    "iot_class": "local_polling",
+    "issue_tracker": "https://github.com/joanlopez/ha-idotmatrix/issues",
+    "quality_scale": "bronze",
+    "version": "0.1.0"
+}
