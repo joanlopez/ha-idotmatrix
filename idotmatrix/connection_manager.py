@@ -266,15 +266,33 @@ class ConnectionManager:
         #     restructured_packets.append(restructured_packet)
         # packets = restructured_packets
 
+        PACKET_DELAY_S = 0.05
+        MAX_RETRIES = 2
+
         for i, packet in enumerate(packets):
             for j, ble_paket in enumerate(packet):
+                if i > 0 or j > 0:
+                    await asyncio.sleep(PACKET_DELAY_S)
                 self.logging.debug(f"sending packet {i + 1}.{j + 1} of {len(packets)}.{len(packets[-1])}")
                 wait_for_response = response if j == len(packet) - 1 else False
-                await self.client.write_gatt_char(
-                    char_specifier=UUID_CHARACTERISTIC_WRITE_DATA,
-                    data=ble_paket,
-                    response=wait_for_response
-                )
+
+                for attempt in range(MAX_RETRIES + 1):
+                    try:
+                        await self.client.write_gatt_char(
+                            char_specifier=UUID_CHARACTERISTIC_WRITE_DATA,
+                            data=ble_paket,
+                            response=wait_for_response
+                        )
+                        break
+                    except BleakDBusError as e:
+                        if "0x0e" in str(e) and attempt < MAX_RETRIES:
+                            self.logging.warning(
+                                "ATT 0x0e on packet %d.%d, retry %d/%d",
+                                i + 1, j + 1, attempt + 1, MAX_RETRIES,
+                            )
+                            await asyncio.sleep(0.3 * (attempt + 1))
+                        else:
+                            raise
                 if wait_for_response:
                     try:
                         response_data = await self.client.read_gatt_char(UUID_READ_DATA)

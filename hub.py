@@ -27,3 +27,13 @@ class IDotMatrixHub:
                 _LOGGER.debug("Text sent successfully to %s", self.client.mac_address)
             finally:
                 await self.client.disconnect()
+
+    async def async_upload_gif(self, file_path: str) -> None:
+        async with self._lock:
+            _LOGGER.debug("Uploading GIF to %s", self.client.mac_address)
+            await self.client.connect()
+            try:
+                await self.client.gif.upload_gif_file(file_path=file_path)
+                _LOGGER.debug("GIF uploaded successfully to %s", self.client.mac_address)
+            finally:
+                await self.client.disconnect()

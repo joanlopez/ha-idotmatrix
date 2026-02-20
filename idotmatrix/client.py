@@ -1,5 +1,6 @@
 from .connection_manager import ConnectionManager
 from .modules.text import TextModule
+from .modules.gif import GifModule
 from .screensize import ScreenSize
 
 class IDotMatrixClient:
@@ -31,6 +32,14 @@ class IDotMatrixClient:
         return TextModule(
             connection_manager=self._connection_manager,
         )
+
+    @property
+    def gif(self) -> GifModule:
+        return GifModule(
+            connection_manager=self._connection_manager,
+            screen_size=self.screen_size
+        )
+
 
     async def connect(self):
         """

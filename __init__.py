@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from .idotmatrix.client import IDotMatrixClient
 from .idotmatrix.screensize import ScreenSize
 from .hub import IDotMatrixHub
+from .services import async_setup_services
 
 from .const import (
     DOMAIN,
@@ -21,9 +22,18 @@ _LOGGER = logging.getLogger(__name__)
 
 _PLATFORMS: list[Platform] = [Platform.TEXT]
 
+
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Set up the iDotMatrix integration."""
+    hass.data.setdefault(DOMAIN, {})
+    await async_setup_services(hass)
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up iDotMatrix from a config entry."""
     hass.data.setdefault(DOMAIN, {})
+    await async_setup_services(hass)
 
     client = IDotMatrixClient(
         screen_size=ScreenSize.SIZE_64x64,

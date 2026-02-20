@@ -1,0 +1,19 @@
+upload_gif:
+  name: Upload GIF
+  description: Upload a GIF or image from the Home Assistant Media browser (Settings → Media) to the iDotMatrix display.
+  fields:
+    entity_id:
+      name: Entity
+      description: The iDotMatrix text entity to display the image on.
+      required: true
+      selector:
+        entity:
+          domain: text
+          integration: idotmatrix
+    media_file:
+      name: Media file
+      description: Filename in the local media folder (e.g. demo.gif).
+      required: true
+      example: "demo.gif"
+      selector:
+        text:
