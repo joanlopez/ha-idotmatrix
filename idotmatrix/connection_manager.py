@@ -2,10 +2,12 @@ import asyncio
 import logging
 from asyncio import Task
 from collections.abc import Callable
-from typing import List, Optional, Awaitable, Any
+from typing import List, Optional, Awaitable, Any, Tuple
 
 from bleak import BleakClient, BleakScanner, AdvertisementData
-from bleak.exc import BleakDBusError
+from bleak.exc import BleakDBusError, BleakError
+
+from bleak_retry_connector import establish_connection, BleakClientWithServiceCache
 
 from .const import UUID_READ_DATA, UUID_CHARACTERISTIC_WRITE_DATA, BLUETOOTH_DEVICE_NAME
 
@@ -59,16 +61,16 @@ class ConnectionManager:
         self._setup_signal_handlers()
 
     @staticmethod
-    async def discover_devices() -> List[str]:
+    async def discover_devices() -> List[Tuple[str, Any]]:
         """
         Discovers iDotMatrix Bluetooth devices.
         Scans for devices with names starting with the defined BLUETOOTH_DEVICE_NAME.
         Returns:
-            List[str]: A list of Bluetooth addresses (MAC) of discovered iDotMatrix devices.
+            List[Tuple[str, Any]]: A list of (address, BLEDevice) tuples for discovered iDotMatrix devices.
         """
         logging.info("scanning for iDotMatrix bluetooth devices...")
         devices = await BleakScanner.discover(return_adv=True)
-        filtered_devices: List[str] = []
+        filtered_devices: List[Tuple[str, Any]] = []
         for key, (device, adv) in devices.items():
             if (
                 isinstance(adv, AdvertisementData)
@@ -76,7 +78,7 @@ class ConnectionManager:
                 and str(adv.local_name).startswith(BLUETOOTH_DEVICE_NAME)
             ):
                 logging.info(f"found device {key} with name {adv.local_name}")
-                filtered_devices.append(device.address)
+                filtered_devices.append((device.address, device))
         return filtered_devices
 
     def set_address(self, address: str) -> None:
@@ -86,29 +88,6 @@ class ConnectionManager:
             address (str): The Bluetooth address (MAC) of the iDotMatrix device, f.e. "00:11:22:33:44:55".
         """
         self.address = address
-        self._create_ble_client()
-
-    def _create_ble_client(self, address: str = None) -> BleakClient:
-        """
-        Creates a BleakClient instance for the given address.
-        Args:
-            address (str, optional): The Bluetooth address (MAC) of the iDotMatrix device. If not provided,
-                                     it uses the address set in the ConnectionManager instance.
-        Returns:
-            BleakClient: An instance of BleakClient connected to the specified address.
-        Raises:
-            ValueError: If no address is provided and the instance's address is not set.
-        """
-        if address is None and self.address is None:
-            raise ValueError("No address provided for BleakClient.")
-        if address is None:
-            address = self.address
-
-        self.client = BleakClient(
-            address_or_ble_device=address,
-            disconnected_callback=self._on_disconnected
-        )
-        return self.client
 
     async def connect_by_address(self, address: str) -> None:
         """
@@ -130,18 +109,20 @@ class ConnectionManager:
         """
         devices = await self.discover_devices()
         if devices:
-            device = devices[0]
-            # connect to first device
-            self.set_address(device)
-            await self.connect()
-            return device
+            address, ble_device = devices[0]
+            self.set_address(address)
+            await self.connect(device=ble_device)
+            return address
         raise AssertionError(
             "No iDotMatrix devices found. Please ensure the device is powered on, in range, and not connected to another device.")
 
-    async def connect(self) -> None:
+    async def connect(self, device: Optional[Any] = None) -> None:
         """
         Connects to the device using the address set in the ConnectionManager.
         If the client is already connected, it does nothing.
+        Uses bleak-retry-connector for reliable connection establishment with retry logic.
+        Args:
+            device: Optional BLEDevice from discovery. If not provided, device is resolved by address.
         Raises:
             ValueError: If the device address is not set.
         """
@@ -154,9 +135,21 @@ class ConnectionManager:
 
             if not self.is_connected():
                 self.logging.info(f"connecting to {self.address}...")
-                await self.client.connect()
+                if device is None:
+                    device = await BleakScanner.find_device_by_address(self.address)
+                if device is None:
+                    raise ConnectionError(f"Could not find device {self.address}")
+                self.client = await establish_connection(
+                    BleakClientWithServiceCache,
+                    device,
+                    name=device.name or self.address,
+                    disconnected_callback=self._on_disconnected,
+                    use_services_cache=False,  # Fresh discovery each time; cache can cause "Failed to initiate write"
+                )
                 self._connected = True
                 self.logging.info(f"connected to {self.address}")
+                # Give the device time to stabilize before GATT operations
+                await asyncio.sleep(0.5)
 
                 # print service and characteristic information for debugging
                 for service in self.client.services:
@@ -179,6 +172,7 @@ class ConnectionManager:
         """
         # Disable auto-reconnect during active disconnection, it will be re-enabled on active connection attempt
         self._is_auto_reconnect_active = False
+        self._ble_packet_size = None  # Clear cached value; services are cleared on disconnect
         async with connection_manager_lock:
             if self._reconnect_loop_task:
                 self._reconnect_loop_task.cancel()
@@ -212,14 +206,40 @@ class ConnectionManager:
         if not self.is_connected():
             await self.connect()
 
-        self.logging.debug("sending raw data to device")
-        ble_packet_size = await self.get_max_bytes_per_chunk(response)
-        for packet in range(0, len(data), ble_packet_size):
-            self.logging.debug(f"sending chunk {packet // ble_packet_size + 1} of {len(data) // ble_packet_size + 1}")
-            await self.client.write_gatt_char(
-                char_specifier=UUID_CHARACTERISTIC_WRITE_DATA,
-                data=data[packet:packet + ble_packet_size],
-                response=response)
+        for retry_attempt in range(2):
+            try:
+                self.logging.debug("sending raw data to device")
+                ble_packet_size = await self.get_max_bytes_per_chunk(response)
+                for packet in range(0, len(data), ble_packet_size):
+                    self.logging.debug(f"sending chunk {packet // ble_packet_size + 1} of {len(data) // ble_packet_size + 1}")
+                    await self.client.write_gatt_char(
+                        char_specifier=UUID_CHARACTERISTIC_WRITE_DATA,
+                        data=data[packet:packet + ble_packet_size],
+                        response=response)
+                return
+            except Exception as e:
+                if retry_attempt == 0 and (
+                    self._is_service_discovery_error(e) or self._is_write_failed_error(e)
+                ):
+                    self.logging.warning(
+                        "BLE error (reconnecting and retrying): %s",
+                        e,
+                    )
+                    await self.disconnect()
+                    await self.connect()
+                else:
+                    raise
+
+    def _is_service_discovery_error(self, e: Exception) -> bool:
+        """Check if the exception is due to service discovery not being performed yet."""
+        return isinstance(e, BleakError) and "Service Discovery has not been performed yet" in str(e)
+
+    def _is_write_failed_error(self, e: Exception) -> bool:
+        """Check if the exception is a transient BLE write failure (e.g. Failed to initiate write)."""
+        if not isinstance(e, BleakDBusError):
+            return False
+        err_str = str(e).lower()
+        return "failed" in err_str or "failed to initiate write" in err_str
 
     async def send_packets(self, packets: List[List[bytearray | bytes]], response: bool = False):
         """
@@ -240,6 +260,25 @@ class ConnectionManager:
         if not self.is_connected():
             await self.connect()
 
+        for retry_attempt in range(2):
+            try:
+                await self._do_send_packets(packets, response)
+                return
+            except Exception as e:
+                if retry_attempt == 0 and (
+                    self._is_service_discovery_error(e) or self._is_write_failed_error(e)
+                ):
+                    self.logging.warning(
+                        "BLE error (reconnecting and retrying): %s",
+                        e,
+                    )
+                    await self.disconnect()
+                    await self.connect()
+                else:
+                    raise
+
+    async def _do_send_packets(self, packets: List[List[bytearray | bytes]], response: bool = False):
+        """Internal implementation of send_packets (called with retry on service discovery error)."""
         total_byte_count = 0
         for packet in packets:
             for ble_packet in packet:
@@ -252,22 +291,8 @@ class ConnectionManager:
         ble_packet_size = await self.get_max_bytes_per_chunk(response)
         self.logging.debug(f"ble_packet_size size is {ble_packet_size} bytes")
 
-        # restructure packets to fit the BLE packet size
-        # restructured_packets = []
-        # for packet in packets:
-        #     restructured_packet = []
-        #     # first combine all packets into one bytearray
-        #     combined_packet = bytearray()
-        #     for ble_packet in packet:
-        #         combined_packet.extend(ble_packet)
-        #     # then split the combined packet into chunks of size ble_packet_size
-        #     for i in range(0, len(combined_packet), ble_packet_size):
-        #         restructured_packet.append(combined_packet[i:i + ble_packet_size])
-        #     restructured_packets.append(restructured_packet)
-        # packets = restructured_packets
-
-        PACKET_DELAY_S = 0.05
-        MAX_RETRIES = 2
+        PACKET_DELAY_S = 0.1  # Longer delay for reliability with write-with-response
+        MAX_RETRIES = 3
 
         for i, packet in enumerate(packets):
             for j, ble_paket in enumerate(packet):
@@ -285,12 +310,17 @@ class ConnectionManager:
                         )
                         break
                     except BleakDBusError as e:
-                        if "0x0e" in str(e) and attempt < MAX_RETRIES:
+                        err_str = str(e).lower()
+                        is_retryable = (
+                            ("0x0e" in err_str or "failed" in err_str or "failed to initiate write" in err_str)
+                            and attempt < MAX_RETRIES
+                        )
+                        if is_retryable:
                             self.logging.warning(
-                                "ATT 0x0e on packet %d.%d, retry %d/%d",
-                                i + 1, j + 1, attempt + 1, MAX_RETRIES,
+                                "BLE write error on packet %d.%d, retry %d/%d: %s",
+                                i + 1, j + 1, attempt + 1, MAX_RETRIES, e,
                             )
-                            await asyncio.sleep(0.3 * (attempt + 1))
+                            await asyncio.sleep(0.5 * (attempt + 1))
                         else:
                             raise
                 if wait_for_response:
@@ -302,7 +332,6 @@ class ConnectionManager:
                             pass
                         else:
                             self.logging.error(f"error while reading response data: {e}")
-                            # self.logging.warning("no response received, this is expected for some commands")
                     except Exception as e:
                         self.logging.error(f"error while reading response data: {e}")
 
@@ -323,7 +352,7 @@ class ConnectionManager:
         return self._ble_packet_size
 
     async def read(self) -> bytes:
-        if not self.client.is_connected:
+        if not self.is_connected():
             await self.connect()
         data = await self.client.read_gatt_char(UUID_READ_DATA)
         self.logging.info("data received")

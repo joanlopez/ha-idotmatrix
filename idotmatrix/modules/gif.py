@@ -16,7 +16,8 @@ from ..util.image_utils import ResizeMode
 
 ANIMATION_MAX_FRAME_COUNT = 64  # Maximum number of frames in a GIF animation
 DEFAULT_DURATION_PER_FRAME_MS = 200  # Default duration per frame in milliseconds if not specified in the GIF file
-ANIMATION_TOTAL_DURATION_LIMIT_MS = 2000
+# Longer limit allows full animations to play and loop properly; 2s caused truncation and "stuck" playback
+ANIMATION_TOTAL_DURATION_LIMIT_MS = 10000  # 10 seconds
 DEFAULT_ANIMATION_TOTAL_DURATION_MS = ANIMATION_TOTAL_DURATION_LIMIT_MS
 
 # --- Constants based on the Java code ---
