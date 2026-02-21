@@ -1,4 +1,5 @@
 from .connection_manager import ConnectionManager
+from .modules.common import CommonModule
 from .modules.text import TextModule
 from .modules.gif import GifModule
 from .screensize import ScreenSize
@@ -27,6 +28,12 @@ class IDotMatrixClient:
         self.screen_size = screen_size
         self.mac_address = mac_address
 
+    @property
+    def common(self) -> CommonModule:
+        return CommonModule(
+            connection_manager=self._connection_manager,
+        )
+        
     @property
     def text(self) -> TextModule:
         return TextModule(

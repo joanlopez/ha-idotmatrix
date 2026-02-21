@@ -17,3 +17,29 @@ upload_gif:
       example: "demo.gif"
       selector:
         text:
+
+screen_on:
+  name: Screen on
+  description: Turn on the iDotMatrix display screen.
+  fields:
+    entity_id:
+      name: Entity
+      description: The iDotMatrix text entity.
+      required: true
+      selector:
+        entity:
+          domain: text
+          integration: idotmatrix
+
+screen_off:
+  name: Screen off
+  description: Turn off the iDotMatrix display screen.
+  fields:
+    entity_id:
+      name: Entity
+      description: The iDotMatrix text entity.
+      required: true
+      selector:
+        entity:
+          domain: text
+          integration: idotmatrix

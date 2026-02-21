@@ -37,3 +37,23 @@ class IDotMatrixHub:
                 _LOGGER.debug("GIF uploaded successfully to %s", self.client.mac_address)
             finally:
                 await self.client.disconnect()
+
+    async def async_screen_on(self) -> None:
+        async with self._lock:
+            _LOGGER.debug("Turning screen on for %s", self.client.mac_address)
+            await self.client.connect()
+            try:
+                await self.client.common.turn_on()
+                _LOGGER.debug("Screen turned on for %s", self.client.mac_address)
+            finally:
+                await self.client.disconnect()
+
+    async def async_screen_off(self) -> None:
+        async with self._lock:
+            _LOGGER.debug("Turning screen off for %s", self.client.mac_address)
+            await self.client.connect()
+            try:
+                await self.client.common.turn_off()
+                _LOGGER.debug("Screen turned off for %s", self.client.mac_address)
+            finally:
+                await self.client.disconnect()
